@@ -12,7 +12,7 @@ Sign in with your normal Microsoft account page, get your token, and read it in 
 [![Beginner friendly](https://img.shields.io/badge/Level-Beginner%20friendly-2EA043)](#start)
 [![Stars](https://img.shields.io/github/stars/21bshwjt/entra-id-claims-and-tokens?style=social)](https://github.com/21bshwjt/entra-id-claims-and-tokens/stargazers)
 
-[What is a token?](#token) · [ID vs access token](#flow) · [PKCE](#pkce) · [Get started](#start) · [Read your token](#read) · [Problems?](#problems) · [Advanced guide](docs/Advanced-Guide.md)
+[What is a token?](#token) · [ID vs access token](#flow) · [PKCE](#pkce) · [Get started](#start) · [Graph test](#graph) · [Read your token](#read) · [Problems?](#problems) · [Advanced guide](docs/Advanced-Guide.md)
 
 </div>
 
@@ -29,10 +29,12 @@ Sign in with your normal Microsoft account page, get your token, and read it in 
 7. [🚀 Get started in 4 steps](#start)
 8. [🔍 Read your token](#read)
 9. [⭐ Next level: a token for your own API](#next)
-10. [🧯 Something went wrong?](#problems)
-11. [🛡 Keep it safe](#safe)
-12. [📖 Words you'll see](#words)
-13. [🎓 Want to go deeper?](#deeper)
+10. [📊 Test with Microsoft Graph](#graph)
+11. [🧯 Something went wrong?](#problems)
+12. [🛡 Keep it safe](#safe)
+13. [📖 Words you'll see](#words)
+14. [📒 Research notes](#research)
+15. [🎓 Want to go deeper?](#deeper)
 
 ---
 
@@ -297,6 +299,9 @@ After you sign in, Microsoft needs to know where to deliver the token. The scrip
 > [!IMPORTANT]
 > Pick **Mobile and desktop applications**, *not* "Single-page application" or "Web". The wrong choice is the most common cause of errors.
 
+> [!NOTE]
+> **No port needed.** The script listens on `http://localhost:8400/` by default, but you register just `http://localhost`. For `localhost` addresses, Entra ID ignores the port when it checks the redirect, so any `-Port` works with this one entry.
+
 ### Step 3 · Run the script
 
 1. Open the unzipped folder, click the address bar, type `powershell` and press **Enter**. A PowerShell window opens in that folder.
@@ -385,6 +390,99 @@ In jwt.ms, check:
 
 ---
 
+<a id="graph"></a>
+
+## 📊 Test with Microsoft Graph
+
+**Microsoft Graph** is Microsoft's API for Microsoft 365 data: your profile, mail, calendar, Teams and more. The second script, [Scripts/Test-GraphApi.ps1](Scripts/Test-GraphApi.ps1), signs you in the same way (browser + PKCE, no secret), gets a **Graph access token**, and **uses it** to call Graph for you.
+
+```mermaid
+flowchart LR
+    A["🖥 Run<br/>Test-GraphApi.ps1"] --> B["🔐 Sign in"]
+    B --> C["🎟 Graph access token<br/>(aud = Microsoft Graph)"]
+    C --> D["📊 GET graph.microsoft.com/v1.0/me"]
+    D --> E["✅ Your profile as JSON"]
+```
+
+### Step 1 · Check the app's Graph permissions
+
+In your app registration: **API permissions**. New apps already have **Microsoft Graph → User.Read**, which is all you need for `/me`.
+
+For other data, **Add a permission → Microsoft Graph → Delegated permissions**, then add what you need:
+
+| To call | What it returns | Permission needed (least privilege) |
+| --- | --- | --- |
+| `/me` | Your profile | `User.Read` |
+| `/me/memberOf` | Groups and roles you're a direct member of | `User.Read` |
+| `/me/events` | Your calendar events | `Calendars.ReadBasic` |
+| `/me/messages` | Your emails (without the body) | `Mail.ReadBasic` |
+
+> [!NOTE]
+> Delegated permissions like these let the app act **as you**, so it can only see what **you** can see. If your organisation doesn't let users approve permissions themselves, an admin must click **Grant admin consent**.
+
+### Step 2 · Run it
+
+```powershell
+# Your profile (the simplest test)
+.\Scripts\Test-GraphApi.ps1 -TenantId "<your-tenant-id>" -ClientId "<your-client-id>"
+
+# Your profile and your groups
+.\Scripts\Test-GraphApi.ps1 -TenantId "<your-tenant-id>" -ClientId "<your-client-id>" -Endpoint '/me', '/me/memberOf'
+
+# Your profile, plus the complete JWT (header, all claims, times, signature)
+.\Scripts\Test-GraphApi.ps1 -TenantId "<your-tenant-id>" -ClientId "<your-client-id>" -ShowJwt
+
+# Your next 5 calendar events (ask for the extra permission with -Scope)
+.\Scripts\Test-GraphApi.ps1 -TenantId "<your-tenant-id>" -ClientId "<your-client-id>" `
+    -Scope "openid profile User.Read Calendars.ReadBasic" `
+    -Endpoint '/me/events?$top=5&$select=subject,start,end'
+```
+
+> [!IMPORTANT]
+> Put endpoints in **single quotes** (`'...'`). In double quotes PowerShell treats `$top` and `$select` as variables and removes them.
+
+### Step 3 · Read the result
+
+The script prints three things:
+
+1. **What the token allows:** the granted permissions (e.g. `User.Read`), when it expires, and its `aud` (Microsoft Graph).
+
+   > [!NOTE]
+   > This Graph token **won't** contain your app's roles or custom claims, because it's made for Graph. Add `-ShowJwt` and look at the **ID TOKEN** section to see them. See [Research notes → Graph facts](#research).
+
+2. **The call:** `=== GET https://graph.microsoft.com/v1.0/me ===`
+3. **Graph's answer** as JSON, for example `displayName`, `mail`, `jobTitle`. For lists it also says how many items came back.
+
+If a call fails, the script shows Graph's error and a hint:
+
+| Result | Meaning | Fix |
+| --- | --- | --- |
+| **HTTP 403** | The token doesn't have the permission this endpoint needs | Add the permission in **API permissions** *and* in `-Scope`, then consent |
+| **HTTP 404** | Nothing found at that path (e.g. a user with no mailbox) | Check the path; try `/me` first |
+| **HTTP 401** | The token was rejected or expired | Run the script again |
+| **My roles / custom claims aren't in the token** | Expected: the Graph access token is for Graph, not your app | With `-ShowJwt`, look in the **ID TOKEN** section, or use `Get-EntraToken.ps1` for a token for your own API |
+
+<details>
+<summary><b>⚙ All Test-GraphApi.ps1 options</b></summary>
+<br/>
+
+| Option | Required | Default | What it does |
+| --- | :---: | --- | --- |
+| `-TenantId` | ✅ | | Your organisation's ID |
+| `-ClientId` | ✅ | | Your app's ID |
+| `-Scope` | | `openid profile User.Read` | Graph permissions to ask for. Graph scopes only; mixing in your own API's scope fails with `AADSTS700022` |
+| `-Endpoint` | | `/me` | One or more Graph paths to call (or full `https://graph.microsoft.com/...` URLs) |
+| `-ApiVersion` | | `v1.0` | `v1.0` or `beta` (beta can change; don't rely on it in production) |
+| `-Port` | | `8400` | The local port the script listens on |
+| `-ShowJwt` | | off | Print the **complete JWT** for the access token and the ID token: raw token, decoded header, every claim, readable times (`iat`, `nbf`, `exp`) and the signature. Copies the access token for jwt.ms. Alias: `-ShowToken` |
+
+</details>
+
+> [!TIP]
+> Want to explore more endpoints? Try them first in **[Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)**, Microsoft's free web tool. Each API page on Microsoft Learn lists the permission it needs.
+
+---
+
 <a id="problems"></a>
 
 ## 🧯 Something went wrong?
@@ -395,6 +493,8 @@ Errors from Microsoft start with **AADSTS** and a number. Find yours:
 | --- | --- | --- |
 | `AADSTS50011` | Entra doesn't know where to send you back | Do [Step 2](#start) again: `http://localhost` under **Mobile and desktop applications** |
 | `AADSTS9002327` | The redirect was added as **Single-page application** | Remove it there, add it under **Mobile and desktop applications** |
+| `AADSTS7000218` ("must contain 'client_assertion' or 'client_secret'") | The redirect was added under **Web**, so Entra thinks your app has a password | Remove `http://localhost` from **Web**, add it under **Mobile and desktop applications** |
+| `AADSTS50146` ("application-specific signing key") | The app has custom claims, but hasn't said it accepts them | Single-tenant app: **Manifest** → `"api"` section → `"acceptMappedClaims": true` → **Save**. Or remove the custom claims |
 | `AADSTS700016` | Entra can't find your app | Check `-TenantId` and `-ClientId` for typos |
 | `AADSTS50105` | Your app only lets assigned people in, and you're not assigned | **Enterprise apps → your app → Users and groups → Add user/group** |
 | `AADSTS65001` | Nobody has approved (consented to) the permission | **API permissions → Grant admin consent** |
@@ -446,6 +546,209 @@ More errors and fixes: [Advanced guide → Troubleshooting](docs/Advanced-Guide.
 
 ---
 
+<a id="research"></a>
+
+## 📒 Research notes
+
+My notes from building and testing these scripts, kept for later reference. Every fact is checked against Microsoft Learn (links in each topic). Items marked *observed* come from real testing, not from documentation.
+
+<details>
+<summary><b>🧪 1 · Real troubleshooting log (what happened, in order)</b></summary>
+<br/>
+
+These errors came up, one after another, while running `Test-GraphApi.ps1` against an existing app registration:
+
+| # | Error | Root cause | Fix that worked |
+| :---: | --- | --- | --- |
+| 1 | `AADSTS7000218`: request body must contain `client_assertion` or `client_secret` | `http://localhost` was registered under the **Web** platform, so Entra treated the app as a confidential client | Removed it from **Web**; added `http://localhost` under **Mobile and desktop applications** |
+| 2 | `AADSTS50146`: application-specific signing key required | The app had **custom claims** (Attributes & Claims). Asking for `openid` issues an ID token for the app, which gets those claims | Set `"acceptMappedClaims": true` in the manifest's `api` section (single-tenant app) |
+| 3 | Portal: *"Update application manifest failed: The Etag values did not match"* | *Observed:* the manifest editor showed an old copy; the app had changed (redirect URI edit) after the editor opened | Reloaded the page and made the edit again on the fresh copy |
+| 4 | Question: *"My app has no port, but the script uses 8400"* | Not a problem: Entra ignores the port for `localhost` redirect URIs | Nothing to change; keep `http://localhost` |
+| 5 | *"The Graph call didn't show my claim in the JWT"* | Expected: the Graph access token's `aud` is Microsoft Graph, and Entra only adds roles and custom claims to tokens **addressed to your app** | Read the **ID token** (`-ShowJwt` → `ID TOKEN` section), or get an access token for your own API with `Get-EntraToken.ps1` |
+
+**Lesson:** for testing, use a **separate app registration** (e.g. `Token Test`) so test settings never affect a real app.
+
+</details>
+
+<details>
+<summary><b>🖥 2 · Public vs confidential client (why Web vs Mobile matters)</b></summary>
+<br/>
+
+- Entra decides the client type from the **platform of the redirect URI** used in the request:
+  - **Web** → confidential client → must send a client secret or certificate, otherwise `AADSTS7000218`
+  - **Mobile and desktop applications** → public client → must **not** send a secret, otherwise `AADSTS700025` (*"Client is public so neither 'client_assertion' nor 'client_secret' should be presented"*)
+- **"Allow public client flows"** is for flows with **no** redirect URI (device code, username/password, Integrated Windows Auth). It's not the fix for the auth code flow.
+- Moving `http://localhost` to Mobile/desktop doesn't change the user's sign-in, MFA, Conditional Access, claims or permissions. Only the app's proof changes (PKCE instead of a secret).
+- **Watch out:** if a local web app uses the same app registration with `http://localhost` + a secret, it breaks after the move. Separate them by **path** (e.g. `http://localhost/webapp` under Web) or use another app registration.
+
+📚 [AADSTS7000218 troubleshooting](https://learn.microsoft.com/troubleshoot/entra/entra-id/app-integration/confidential-client-application-authentication-error-aadsts7000218) · [Public and confidential clients](https://learn.microsoft.com/entra/identity-platform/msal-client-applications) · [Error codes](https://learn.microsoft.com/entra/identity-platform/reference-error-codes)
+
+</details>
+
+<details>
+<summary><b>🔁 3 · Redirect URIs and localhost</b></summary>
+<br/>
+
+- For `localhost` redirect URIs the **port is ignored** when matching: `http://localhost` matches `http://localhost:8400/`, `:8500/`, any port.
+- Don't register several localhost URIs that differ **only by port**. Entra picks one arbitrarily (and its platform type with it). Use different **paths** instead.
+- `http://` is allowed only for localhost.
+- Microsoft prefers `127.0.0.1` over `localhost`, but the portal text box won't accept an `http://127.0.0.1` URI (needs a manifest edit). IPv6 `[::1]` isn't supported.
+- The script's `-Port` is only the local port it listens on. It's not an Entra setting.
+
+📚 [Redirect URI restrictions](https://learn.microsoft.com/entra/identity-platform/reply-url)
+
+</details>
+
+<details>
+<summary><b>🏷 4 · Custom claims and acceptMappedClaims</b></summary>
+<br/>
+
+- Tokens with custom claims (claims mapping) need **either** `acceptMappedClaims: true` **or** a custom signing key. Otherwise `AADSTS50146`.
+- `acceptMappedClaims` lives in the manifest's **`api`** section (Microsoft Graph manifest format).
+- **Single-tenant apps only.** For multi-tenant apps Microsoft says use a custom signing key instead.
+- With `acceptMappedClaims`, the token audience must be the **app's GUID** or a **verified domain**, otherwise `AADSTS501461`. v2.0 access tokens (`aud` = client ID) satisfy this.
+- Restricted claims can't be customised, e.g. `aud`, `sub`, `upn`, `roles`, `scp`, `tid`, `acct`, `acrs`, `amr` and anything starting with `xms_`.
+- **Gotcha:** even when you only want a *Graph* token, asking for `openid` also issues an **ID token for your app**, and that ID token is where the custom claims (and the error) come from.
+
+**Alternative to the portal** (when the manifest editor fails):
+
+```powershell
+Connect-MgGraph -Scopes "Application.ReadWrite.All"
+Update-MgApplication -ApplicationId "<object-id>" -BodyParameter @{ api = @{ acceptMappedClaims = $true } }
+```
+
+📚 [Customize JWT claims](https://learn.microsoft.com/entra/identity-platform/jwt-claims-customization) · [Restricted claim set](https://learn.microsoft.com/entra/identity-platform/reference-claims-customization) · [Claims mapping with Graph](https://learn.microsoft.com/graph/how-to-claims-customization)
+
+</details>
+
+<details>
+<summary><b>📄 5 · App manifest facts</b></summary>
+<br/>
+
+- The portal now uses the **Microsoft Graph manifest format**. Moved from the old Azure AD Graph format:
+  - `acceptMappedClaims` → `api.acceptMappedClaims`
+  - `accessTokenAcceptedVersion` → `api.requestedAccessTokenVersion`
+  - `allowPublicClient` → `isFallbackPublicClient`
+- `requestedAccessTokenVersion`: `1`, `2` or `null`. **`null` means v1.0 tokens.** It's set by the **API** (resource), not the client.
+- *Observed:* "Etag values did not match" = the editor's copy is out of date. Reload, edit again, save. Never paste an old copied manifest.
+
+📚 [Manifest (Microsoft Graph format)](https://learn.microsoft.com/entra/identity-platform/reference-microsoft-graph-app-manifest) · [Azure AD Graph format deprecation](https://learn.microsoft.com/entra/identity-platform/azure-active-directory-graph-app-manifest-deprecation)
+
+</details>
+
+<details>
+<summary><b>🎟 6 · Token facts (ID token, access token, claims)</b></summary>
+<br/>
+
+| Fact | Detail |
+| --- | --- |
+| ID token | For the **client app**; proves who signed in; needs `openid`; never send it to an API |
+| Access token | For **one API**; `aud` must match the API; sent as `Authorization: Bearer` |
+| One token = one API | Scopes for two APIs in one request fail with `AADSTS700022` |
+| `aud` in v2.0 tokens | Always the API's client ID |
+| `azp` / `azpacr` | v2.0 replacements for `appid` / `appidacr`. `azpacr`: `0` public client, `1` secret, `2` certificate |
+| `uti` | Entra's unique token ID, equivalent to the standard `jti` |
+| Access token lifetime | Random **60–90 minutes** (75 average); with Continuous Access Evaluation it can be extended to about 20–28 hours |
+| `amr` in v2.0 tokens | Add it as an **optional claim** |
+| `acct` | `0` = member, `1` = guest (optional claim) |
+| `wids` | Role **template IDs** (same in every tenant). `b79fbf4d-3ef9-4689-8143-76b194e85509` is sent for every non-guest user |
+| Groups overage | More than **200** groups (JWT) or **150** (SAML) → overage claim pointing to Graph instead of `groups` |
+| Default Access | Satisfies "assignment required" but **never** adds a `roles` claim |
+
+📚 [Access token claims](https://learn.microsoft.com/entra/identity-platform/access-token-claims-reference) · [Access tokens](https://learn.microsoft.com/entra/identity-platform/access-tokens) · [Optional claims](https://learn.microsoft.com/entra/identity-platform/optional-claims-reference) · [Built-in roles](https://learn.microsoft.com/entra/identity/role-based-access-control/permissions-reference)
+
+</details>
+
+<details>
+<summary><b>📊 7 · Microsoft Graph facts</b></summary>
+<br/>
+
+- A Graph token's `aud` is Microsoft Graph. It **never** contains your app's roles or custom claims.
+- To see your app's claims while testing Graph: the **ID token** from the same sign-in is addressed to your app, so it does carry them (if `openid` is in the scope).
+
+  | Token from one sign-in | `aud` | Your roles / custom claims |
+  | --- | --- | --- |
+  | Graph access token | Microsoft Graph | ❌ Never |
+  | ID token | Your client ID | ✅ Yes |
+  | Access token for your own API (separate sign-in, `api://<client-id>/api.access`) | Your client ID | ✅ Yes |
+- Graph tokens don't follow your app's `requestedAccessTokenVersion`.
+- Microsoft: don't validate or depend on tokens for APIs you don't own. Graph tokens can use a special format; reading them in jwt.ms is for debugging only.
+- Least-privileged delegated permissions (checked on each API's Learn page):
+
+| Endpoint | Least privileged | Notes |
+| --- | --- | --- |
+| `/me` | `User.Read` | Added to new app registrations by default |
+| `/me/memberOf` | `User.Read` | Signed-in user's direct memberships |
+| `/me/transitiveMemberOf` | `User.Read` | Including nested groups |
+| `/me/events` | `Calendars.ReadBasic` | `Calendars.Read` also works (more access) |
+| `/me/messages` | `Mail.ReadBasic` | No body or attachments; `Mail.Read` for full mail |
+
+- `/me` endpoints need a **delegated** permission (a signed-in user); application permissions don't work with `/me`.
+- PowerShell: put endpoints in **single quotes** (`'/me/events?$top=5'`) or `$top` becomes an empty variable.
+
+📚 [Graph permissions reference](https://learn.microsoft.com/graph/permissions-reference) · [List events](https://learn.microsoft.com/graph/api/user-list-events) · [List memberOf](https://learn.microsoft.com/graph/api/user-list-memberof) · [List messages](https://learn.microsoft.com/graph/api/user-list-messages)
+
+</details>
+
+<details>
+<summary><b>🔐 8 · Flows: PKCE, client credentials, On-Behalf-Of</b></summary>
+<br/>
+
+- **Auth code + PKCE:** `code_challenge = BASE64URL(SHA-256(code_verifier))`, method `S256`. The verifier goes only on the direct `/token` call. Microsoft recommends this flow for desktop, mobile and SPA apps.
+- **SPA redirect URIs** require an `Origin` header on the token request. A script redeeming a code for a SPA redirect gets `AADSTS9002327`.
+- **Client credentials:** scope **must** be `{resource}/.default`; you can't request individual app permissions; all granted app roles come back in `roles`.
+- **On-Behalf-Of:** `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `requested_token_use=on_behalf_of`; the `assertion` must be an **access token** whose `aud` is the calling API.
+
+📚 [Auth code flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow) · [Client credentials](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-client-creds-grant-flow) · [On-Behalf-Of](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow) · [Scopes and .default](https://learn.microsoft.com/entra/identity-platform/scopes-oidc)
+
+</details>
+
+<details>
+<summary><b>👥 9 · Access control facts</b></summary>
+<br/>
+
+- **Group-based assignment** to enterprise apps needs **Entra ID P1 or P2**. Nested groups **aren't** supported: users must be direct members.
+- **Global Administrators bypass "Assignment required"**, so never test assignment with a Global Admin.
+- **Conditional Access** (and authentication context) needs **Entra ID P1**. Auth context IDs are `c1`–`c99`. It works only for apps that sign in users, not app-only tokens.
+- Claims request for auth context: `{"access_token":{"acrs":{"essential":true,"value":"c1"}}}`.
+
+📚 [Assign users and groups](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal) · [AADSTS50105](https://learn.microsoft.com/troubleshoot/entra/entra-id/app-integration/error-code-aadsts50105-user-not-assigned-role) · [Authentication context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context)
+
+</details>
+
+<details>
+<summary><b>✏ 10 · Corrections made to earlier versions of this guide</b></summary>
+<br/>
+
+Things the first draft got wrong or left vague, fixed after checking Microsoft Learn:
+
+| Earlier text | Correction |
+| --- | --- |
+| "Set `acceptMappedClaims` in the Manifest" | It belongs in the manifest's **`api`** section, single-tenant apps only |
+| Restricted claim names included `email`, `oid`, `nameid` | Not confirmed; replaced with names from Microsoft's restricted list |
+| "There is no `jti`" | `uti` is Entra's **equivalent** of `jti` |
+| "Single app role → role picker greyed out" | Not found in Microsoft docs; removed |
+| `amr` shown in a v2.0 token with no setup | `amr` must be added as an **optional claim** for v2.0 |
+| Graph token described like your own API's token | Graph tokens ignore your token version setting; don't validate or depend on them |
+
+</details>
+
+<details>
+<summary><b>🧰 11 · PowerShell tips</b></summary>
+<br/>
+
+| Tip | Command or detail |
+| --- | --- |
+| Allow scripts for this window only | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
+| Unblock a downloaded script | `Unblock-File .\Scripts\Get-EntraToken.ps1` |
+| Keep OData options intact | Single quotes: `'/me/events?$top=5&$select=subject'` |
+| Both scripts work in | Windows PowerShell 5.1 and PowerShell 7+ (parse-checked in both) |
+| Port in use | Add `-Port 8500` (no Entra change needed) |
+
+</details>
+
+---
+
 <a id="deeper"></a>
 
 ## 🎓 Want to go deeper?
@@ -479,7 +782,8 @@ The **[Advanced guide](docs/Advanced-Guide.md)** covers:
 ```text
 📦 entra-id-claims-and-tokens
  ┣ 📂 Scripts
- ┃ ┗ 📜 Get-EntraToken.ps1   # The script
+ ┃ ┣ 📜 Get-EntraToken.ps1   # Get a token and read it in jwt.ms
+ ┃ ┗ 📜 Test-GraphApi.ps1    # Get a Graph token and call Microsoft Graph with it
  ┣ 📂 docs
  ┃ ┗ 📜 Advanced-Guide.md    # Detailed reference and 10 use cases
  ┗ 📜 README.md              # This beginner guide
@@ -497,6 +801,8 @@ The **[Advanced guide](docs/Advanced-Guide.md)** covers:
 | 1.1 | 2026-11-22 | Added 10 claim use cases, the three kinds of app, and portal vs own app |
 | 1.2 | 2026-11-22 | Moved the script to `Scripts/`; facts checked against Microsoft Learn |
 | 1.3 | 2026-11-22 | Beginner-friendly README; detailed content moved to `docs/Advanced-Guide.md` |
+| 1.4 | 2026-11-22 | New `Scripts/Test-GraphApi.ps1`: sign in, get a Graph token and call Microsoft Graph endpoints |
+| 1.5 | 2026-11-22 | `-ShowJwt` (complete decoded JWT); error hints for AADSTS7000218 and AADSTS50146; research notes section |
 
 </details>
 

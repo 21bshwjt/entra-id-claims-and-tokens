@@ -115,6 +115,15 @@ try {
 } catch {
     $err = ($_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue)
     Write-Host "Error: $($err.error) - $($err.error_description)" -ForegroundColor Red
+    if ($err.error_description -match 'AADSTS7000218') {
+        Write-Host "Hint: http://localhost is registered under the 'Web' platform, so Entra expects a client secret." -ForegroundColor Yellow
+        Write-Host "      Authentication > remove it from 'Web' > Add a platform > 'Mobile and desktop applications' > http://localhost" -ForegroundColor Yellow
+    }
+    if ($err.error_description -match 'AADSTS50146') {
+        Write-Host "Hint: the app has custom claims (Enterprise apps > Single sign-on > Attributes & Claims)." -ForegroundColor Yellow
+        Write-Host "      Single-tenant app: Manifest > ""api"" section > ""acceptMappedClaims"": true > Save." -ForegroundColor Yellow
+        Write-Host "      Or remove the custom claims, or test with a separate app registration." -ForegroundColor Yellow
+    }
     return
 }
 

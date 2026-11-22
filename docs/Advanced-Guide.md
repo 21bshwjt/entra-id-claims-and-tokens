@@ -40,6 +40,7 @@
 | --- | --- | --- |
 | `AADSTS50011` | Redirect URI mismatch | Add `http://localhost` under **Mobile and desktop applications** |
 | `AADSTS9002327` | Redirect URI is under **Single-page application** (SPA redirects need a browser `Origin` header) | Move it to **Mobile and desktop applications** |
+| `AADSTS7000218` | The redirect URI is registered under **Web**, which makes the app a confidential client that must send a secret | Move `http://localhost` from **Web** to **Mobile and desktop applications**; don't register it under both |
 | `AADSTS65001` | No consent | Grant admin consent for the scope |
 | `AADSTS50105` | User not assigned and **Assignment required = Yes** | **Enterprise apps → (app) → Users and groups** → add the user |
 | `AADSTS500011` | Resource principal not found: scope or Application ID URI missing, or wrong tenant | Complete **Expose an API**; check `-TenantId` |
@@ -313,7 +314,9 @@ Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/<tenant-i
 "scp": "Calendars.Read User.Read"
 ```
 
-**Test with this script:** `.\Scripts\Get-EntraToken.ps1 -TenantId <t> -ClientId <c> -Scope "User.Read Calendars.Read"`
+**Inspect the token:** `.\Scripts\Get-EntraToken.ps1 -TenantId <t> -ClientId <c> -Scope "User.Read Calendars.Read"`
+
+**Call Graph with it:** `.\Scripts\Test-GraphApi.ps1 -TenantId <t> -ClientId <c> -Scope "openid profile User.Read Calendars.Read" -Endpoint '/me', '/me/events?$top=5'` (see [Test with Microsoft Graph](../README.md#graph))
 
 > [!NOTE]
 > Graph tokens are for Graph to validate, not your app, and they don't follow your app's `requestedAccessTokenVersion`. Reading one in jwt.ms is fine for debugging, but don't build code that depends on its contents. A Graph token never contains your app's roles or custom claims. Request only the permissions you need.
