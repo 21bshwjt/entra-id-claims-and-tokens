@@ -126,7 +126,28 @@ openid   profile   api://<client-id>/api.access
   └── 🪪 an ID token
 ```
 
-An access token can only be for **one** API. If you ask for a Microsoft Graph scope like `User.Read`, the wristband is for **Microsoft Graph** (Microsoft 365 data), not your app, so it won't contain your app's roles or custom claims.
+#### 🎟 One access token = one API
+
+A wristband opens **one** area. An access token works the same way: it's made for **one** API only. The scope you ask for decides **which** API.
+
+Let's compare two sign-ins with the same app:
+
+| | Sign-in A | Sign-in B |
+| --- | --- | --- |
+| **Scope you ask for** | `api://<client-id>/api.access` | `User.Read` |
+| **Which API that scope belongs to** | ✅ **Your app's API** | **Microsoft Graph** (Microsoft's API for Microsoft 365 data: your profile, mail, calendar) |
+| **Token's `aud` (addressed to)** | Your client ID | Microsoft Graph |
+| **Who will read the token** | Your API | Microsoft Graph |
+| **Contains your app's roles** (e.g. `Expense.Approver`) | ✅ Yes | ❌ No |
+| **Contains your custom claims** (e.g. `department`) | ✅ Yes | ❌ No |
+
+**Why does B have no roles?** You set up roles and custom claims **on your app registration**. Entra ID only puts them in tokens **addressed to your app**. A token for Microsoft Graph is addressed to Graph, so Entra ID fills it with what **Graph** needs (like `scp: User.Read`), not your app's settings.
+
+> [!TIP]
+> **Testing your app's claims?** Use the script's default scope (`api://<client-id>/api.access`) and check that `aud` = your client ID. If `aud` is Microsoft Graph, you asked for the wrong scope. That's not a problem with your roles.
+
+> [!NOTE]
+> You can't get one token for two APIs. Asking for scopes from two different APIs in one request (for example `api://<client-id>/api.access User.Read`) fails with error `AADSTS700022`. An app that needs both asks for two tokens, one per API.
 
 </details>
 
