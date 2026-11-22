@@ -18,6 +18,8 @@
 
 .PARAMETER Endpoint
     Optional. One or more Graph paths to call. Default: "/me".
+    Full URLs are accepted only if they start with https://graph.microsoft.com/
+    so the token is never sent anywhere else.
     Use single quotes for OData options, e.g. '/me/messages?$top=5',
     so PowerShell doesn't treat $top as a variable.
 
@@ -169,7 +171,7 @@ Start-Process $authUrl
 $context = $listener.GetContext()
 $query   = $context.Request.QueryString
 $html    = if ($query["code"]) { "<h3>Signed in. You can close this tab and return to PowerShell.</h3>" }
-           else { "<h3>Sign-in failed: $($query['error']) - $($query['error_description'])</h3>" }
+           else { "<h3>Sign-in failed: " + [System.Net.WebUtility]::HtmlEncode("$($query['error']) - $($query['error_description'])") + "</h3>" }
 $bytes = [Text.Encoding]::UTF8.GetBytes("<html><body style='font-family:sans-serif'>$html</body></html>")
 $context.Response.ContentType = "text/html"
 $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
@@ -225,6 +227,12 @@ if ($claims) {
     Write-Host ("Signed-in user      : {0}" -f $(if ($claims.upn) { $claims.upn } else { $claims.unique_name }))
 }
 
+if ($token.id_token) {
+    if (-not $ShowJwt) { Write-Host "ID token            : returned (add -ShowJwt to see it, with your app's claims)" -ForegroundColor Cyan }
+} else {
+    Write-Host "ID token            : not returned (include 'openid' in -Scope)" -ForegroundColor Yellow
+}
+
 if ($ShowJwt) {
     Show-Jwt "ACCESS TOKEN (for Microsoft Graph)" $token.access_token
     if ($token.id_token) {
@@ -248,8 +256,14 @@ if ($ShowJwt) {
 $headers = @{ Authorization = "Bearer $($token.access_token)" }
 
 foreach ($path in $Endpoint) {
-    $uri = if ($path -match '^https://') { $path }
+    $uri = if ($path -match '^https?://') { $path }
            else { "$graphRoot/$ApiVersion/" + $path.TrimStart('/') }
+
+    # Safety: only ever send the Graph token to Microsoft Graph
+    if (-not $uri.StartsWith("$graphRoot/", [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "`nSkipped $uri : only $graphRoot/... is allowed, so your token is never sent anywhere else." -ForegroundColor Red
+        continue
+    }
 
     Write-Host "`n=== GET $uri ===" -ForegroundColor Cyan
     try {

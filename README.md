@@ -323,7 +323,15 @@ After you sign in, Microsoft needs to know where to deliver the token. The scrip
 
 ### Step 4 · Look at your token
 
-1. Back in PowerShell you'll see `=== Id token ===` and a long line of text. It's already copied for you.
+1. Back in PowerShell you'll see `=== Id token ===`, a long line of text (already copied for you), and a **claim check** like this:
+
+   ```text
+   === Claim check: Id token ===
+   [OK]   aud (for)           : <your-client-id>
+   [OK]   ver                 : 2.0
+   [INFO] name                : Alex Smith
+   [INFO] user                : alex@contoso.com
+   ```
 2. Open **[jwt.ms](https://jwt.ms)** and paste it (**Ctrl + V**).
 3. Click the **Claims** tab. 🎉 You're reading what Entra ID says about you.
 
@@ -349,6 +357,33 @@ These are the claims you'll see in your first ID token, in plain words:
 > **Golden rule:** always check **`aud`** first. If a token isn't addressed to the right app, nothing else in it matters, just like a wristband for the wrong area.
 
 You can ignore claims like `aio`, `rh`, `uti` and `sid`. They're for Microsoft's own bookkeeping.
+
+### 🪪 or 🎟? Telling the two tokens apart in jwt.ms
+
+Both are JWTs and look the same (`eyJ...`). The claims tell you which is which.
+
+> [!TIP]
+> **Quick rule:** look for **`scp`**. If it's there, it's an 🎟 **access token**. If there's no `scp` and `aud` is your app's client ID, it's an 🪪 **ID token**.
+
+| Check in jwt.ms | 🪪 ID token | 🎟 Access token |
+| --- | --- | --- |
+| **`scp`** (permissions) | ❌ Never | ✅ Yes, e.g. `api.access` or `User.Read` |
+| **`aud`** (addressed to) | Always **your app's** client ID | The **API**: your client ID (your own API) or Microsoft Graph |
+| **`azp`** / **`azpacr`** | ❌ Not there | ✅ In v2.0 access tokens: the calling app, and how it proved itself |
+| `name`, `preferred_username`, `oid` | ✅ Yes (with `profile`) | Often present too, so not a reliable test |
+| `roles`, custom claims | ✅ If assigned or configured | ✅ If the token is for your app |
+
+**Tricky case:** with the default scope `api://<client-id>/api.access`, your app is both the client **and** the API, so **both tokens have the same `aud`**. Use `scp` (and `azp`) to tell them apart:
+
+```text
+🪪 ID token                          🎟 Access token (your API)
+"aud": "<your-client-id>"            "aud": "<your-client-id>"
+"name": "Alex Smith"                 "scp": "api.access"        ← the giveaway
+"preferred_username": "alex@..."     "azp": "<your-client-id>"
+"oid": "..."                         "azpacr": "0"
+```
+
+The scripts label them for you too: the claim check says `Access token` or `Id token`, and `-ShowJwt` prints `ACCESS TOKEN` and `ID TOKEN` headings.
 
 ---
 
@@ -518,6 +553,30 @@ More errors and fixes: [Advanced guide → Troubleshooting](docs/Advanced-Guide.
 - 🧹 When you're finished testing, remove `http://localhost` from your app's **Authentication** page.
 - 🔑 The script never sees your password. You only type it on Microsoft's own page.
 
+### 🏭 Running in production
+
+**The scripts are read-only.** They sign you in, read tokens and (Graph script) send only `GET` requests. They change nothing in your tenant, store no passwords or secrets, and talk only to `login.microsoftonline.com` and `graph.microsoft.com`. `Test-GraphApi.ps1` refuses to send the token to any other address.
+
+**The real risk is changing a production app** to make them work:
+
+| ⚠ Don't | Why |
+| --- | --- |
+| Add `http://localhost` to a **real** app | Any user could then get a raw token *as that app*, with all its consented permissions, without its secret |
+| Move `localhost` from **Web** on a real app | Anything using it with a client secret breaks (`AADSTS700025`) |
+| Click **"Consent on behalf of your organization"** in a test prompt | Grants that permission to the app for **everyone** in the tenant, permanently |
+| Test with a **Global Administrator** | The token carries admin power, and admins bypass "Assignment required" |
+
+**✅ Safe checklist:**
+
+- [ ] Use a **dedicated test app registration** (single tenant, no secrets, only the permissions you're testing)
+- [ ] **Assignment required = Yes**, with only the testers assigned
+- [ ] Sign in as a **least-privileged test user**
+- [ ] Don't screen-share or record while tokens are on screen (especially with `-ShowJwt`)
+- [ ] Clear the clipboard afterwards. **Windows clipboard history (Win+V) and cloud sync** can keep copies
+- [ ] Paste tokens only into **jwt.ms**, never third-party decoders
+- [ ] When finished, **remove `http://localhost`** or delete the test app
+- [ ] Tell your security team: test sign-ins appear in the Entra sign-in logs
+
 ---
 
 <a id="words"></a>
@@ -643,6 +702,7 @@ Update-MgApplication -ApplicationId "<object-id>" -BodyParameter @{ api = @{ acc
 | Fact | Detail |
 | --- | --- |
 | ID token | For the **client app**; proves who signed in; needs `openid`; never send it to an API |
+| Telling them apart | Only the access token has `scp` (and `azp` / `azpacr` in v2.0). If client and API are the same app, both have the same `aud` |
 | Access token | For **one API**; `aud` must match the API; sent as `Authorization: Bearer` |
 | One token = one API | Scopes for two APIs in one request fail with `AADSTS700022` |
 | `aud` in v2.0 tokens | Always the API's client ID |
@@ -772,6 +832,9 @@ The **[Advanced guide](docs/Advanced-Guide.md)** covers:
 | `-Scope` | | `openid profile api://<ClientId>/api.access` | What to ask for. Decides which API the access token is for |
 | `-TokenType` | | `Access` | `Access` (wristband) or `Id` (name badge) |
 | `-Port` | | `8400` | The local port the script listens on |
+| `-ShowJwt` | | off | Print the **complete JWT** for the access token and the ID token: raw token, decoded header, every claim, readable times and the signature. Alias: `-ShowToken` |
+
+Every run also prints a **claim check** for the chosen token: `[OK]`, `[WARN]` or `[INFO]` for `aud`, `ver`, `scp`, `roles`, custom claims and expiry, with a hint when something looks wrong (for example "This token is for Graph").
 
 </details>
 
@@ -803,6 +866,7 @@ The **[Advanced guide](docs/Advanced-Guide.md)** covers:
 | 1.3 | 2026-11-22 | Beginner-friendly README; detailed content moved to `docs/Advanced-Guide.md` |
 | 1.4 | 2026-11-22 | New `Scripts/Test-GraphApi.ps1`: sign in, get a Graph token and call Microsoft Graph endpoints |
 | 1.5 | 2026-11-22 | `-ShowJwt` (complete decoded JWT); error hints for AADSTS7000218 and AADSTS50146; research notes section |
+| 1.6 | 2026-11-22 | `Get-EntraToken.ps1` matches `Test-GraphApi.ps1`: `-ShowJwt`, error hints, plus an automatic claim check (`[OK]` / `[WARN]` / `[INFO]`) |
 
 </details>
 
