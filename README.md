@@ -530,6 +530,7 @@ Errors from Microsoft start with **AADSTS** and a number. Find yours:
 | `AADSTS9002327` | The redirect was added as **Single-page application** | Remove it there, add it under **Mobile and desktop applications** |
 | `AADSTS7000218` ("must contain 'client_assertion' or 'client_secret'") | The redirect was added under **Web**, so Entra thinks your app has a password | Remove `http://localhost` from **Web**, add it under **Mobile and desktop applications** |
 | `AADSTS50146` ("application-specific signing key") | The app has custom claims, but hasn't said it accepts them | Single-tenant app: **Manifest** → `"api"` section → `"acceptMappedClaims": true` → **Save**. Or remove the custom claims |
+| `AADSTS50020` | You signed in with an account that isn't in this tenant (another company's account, or a personal account) | Sign in with an account from this tenant, or have an admin invite you as a guest |
 | `AADSTS700016` | Entra can't find your app | Check `-TenantId` and `-ClientId` for typos |
 | `AADSTS50105` | Your app only lets assigned people in, and you're not assigned | **Enterprise apps → your app → Users and groups → Add user/group** |
 | `AADSTS65001` | Nobody has approved (consented to) the permission | **API permissions → Grant admin consent** |
@@ -767,12 +768,22 @@ Update-MgApplication -ApplicationId "<object-id>" -BodyParameter @{ api = @{ acc
 <summary><b>👥 9 · Access control facts</b></summary>
 <br/>
 
+- **Single-tenant app (`AzureADMyOrg`): who can sign in?**
+
+  | Account | Sign in? |
+  | --- | --- |
+  | Member of your tenant | ✅ Yes |
+  | **Guest invited into your tenant** (B2B, any email) | ✅ **Yes**: the guest has a user object in your tenant |
+  | User from another tenant, not invited | ❌ `AADSTS50020` ("does not exist in tenant") |
+  | Personal Microsoft account, not invited | ❌ `AADSTS50020` |
+
+  Being in the tenant isn't always enough: **Assignment required** (`AADSTS50105`), **Conditional Access** and **disabled accounts** can still block. The scripts use the tenant-specific URL `login.microsoftonline.com/<TenantId>`, which on its own limits sign-in to members and guests of that tenant.
 - **Group-based assignment** to enterprise apps needs **Entra ID P1 or P2**. Nested groups **aren't** supported: users must be direct members.
 - **Global Administrators bypass "Assignment required"**, so never test assignment with a Global Admin.
 - **Conditional Access** (and authentication context) needs **Entra ID P1**. Auth context IDs are `c1`–`c99`. It works only for apps that sign in users, not app-only tokens.
 - Claims request for auth context: `{"access_token":{"acrs":{"essential":true,"value":"c1"}}}`.
 
-📚 [Assign users and groups](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal) · [AADSTS50105](https://learn.microsoft.com/troubleshoot/entra/entra-id/app-integration/error-code-aadsts50105-user-not-assigned-role) · [Authentication context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context)
+📚 [AADSTS50020](https://learn.microsoft.com/troubleshoot/entra/entra-id/app-integration/error-code-aadsts50020-user-account-identity-provider-does-not-exist) · [Assign users and groups](https://learn.microsoft.com/entra/identity/enterprise-apps/assign-user-or-group-access-portal) · [AADSTS50105](https://learn.microsoft.com/troubleshoot/entra/entra-id/app-integration/error-code-aadsts50105-user-not-assigned-role) · [Authentication context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context)
 
 </details>
 
