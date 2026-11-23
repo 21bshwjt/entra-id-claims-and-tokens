@@ -423,6 +423,108 @@ In jwt.ms, check:
 
 </details>
 
+### 🧾 Real example: approving an expense
+
+<details>
+<summary><b>Show the example</b></summary>
+<br/>
+
+**The story:** Contoso has an **Expense app** (the website) and an **Expense API** (the back-end). Alex is a manager and clicks **Approve** on expense #1042. The website sends Alex's access token to the API, and the API must answer three questions before it approves anything:
+
+1. Is this token **for me**? → `aud`
+2. Did the website get **permission to call me** on Alex's behalf? → `scp`
+3. Is Alex allowed to **approve**? → `roles`
+
+```mermaid
+flowchart LR
+    A["👤 Alex clicks<br/>Approve #1042"] --> B["📱 Expense app"]
+    B -- "POST /expenses/1042/approve<br/>Authorization: Bearer 🎟" --> C["🗄 Expense API"]
+    C --> D{"aud = me?<br/>scp = api.access?<br/>roles has Expense.Approver?"}
+    D -- "all ✅" --> E["✅ 200 Approved"]
+    D -- "roles missing" --> F["⛔ 403 Forbidden"]
+```
+
+#### 1 · Set it up (one app registration plays both parts)
+
+| | Where | What |
+| --- | --- | --- |
+| a | Steps 1 to 4 above | `api://<client-id>/api.access` scope, v2.0 tokens, admin consent |
+| b | **App roles → Create app role** | Display name `Expense Approver` · Members **Users/Groups** · Value `Expense.Approver` → **Apply** |
+| c | **Enterprise apps →** your app **→ Users and groups → Add user/group** | Alex (or the *Managers* group) → role **Expense Approver** → **Assign** |
+
+*(Step b and c are [Use case 1 in the Advanced guide](docs/Advanced-Guide.md#use-cases), with more detail.)*
+
+#### 2 · Get Alex's token
+
+Sign in as Alex and run the script with no `-Scope`:
+
+```powershell
+.\Scripts\Get-EntraToken.ps1 -TenantId "<your-tenant-id>" -ClientId "<your-client-id>"
+```
+
+The claim check answers all three questions for you:
+
+```text
+=== Claim check: Access token ===
+[OK]   aud (for)           : 6e74172b-be56-4843-9ff4-e66a39bb12e3
+[OK]   ver                 : 2.0
+[INFO] iss (issuer)        : https://login.microsoftonline.com/aaaabbbb-0000-cccc-1111-dddd2222eeee/v2.0
+[INFO] name                : Alex Smith
+[INFO] user                : alex@contoso.com
+[INFO] oid (user ID)       : 00aa00aa-bb11-cc22-dd33-44ee44ee44ee
+[OK]   scp (permissions)   : api.access
+[INFO] azpacr (client)     : 0 = public client (PKCE)
+[OK]   roles               : Expense.Approver
+```
+
+And in jwt.ms the important claims look like this (made-up IDs):
+
+```json
+{
+  "aud": "6e74172b-be56-4843-9ff4-e66a39bb12e3",
+  "iss": "https://login.microsoftonline.com/aaaabbbb-0000-cccc-1111-dddd2222eeee/v2.0",
+  "exp": 1795430400,
+  "azp": "6e74172b-be56-4843-9ff4-e66a39bb12e3",
+  "azpacr": "0",
+  "name": "Alex Smith",
+  "preferred_username": "alex@contoso.com",
+  "oid": "00aa00aa-bb11-cc22-dd33-44ee44ee44ee",
+  "scp": "api.access",
+  "roles": ["Expense.Approver"],
+  "ver": "2.0"
+}
+```
+
+#### 3 · What the API decides
+
+| The API asks | Claim | Alex's token | Result |
+| --- | --- | --- | --- |
+| Is it signed by Entra ID and not expired? | signature, `iss`, `exp` | ✅ valid | continue |
+| Is it for me? | `aud` | ✅ my client ID | continue |
+| May this app call me for the user? | `scp` | ✅ `api.access` | continue |
+| May this person approve? | `roles` | ✅ `Expense.Approver` | **200 Approved** |
+| Who approved it (for the audit log)? | `oid` | `00aa00aa-...` | saved with the expense |
+
+Now sign in as **Sam**, who isn't a manager. Sam's token has the same `aud` and `scp`, but the claim check shows `roles : (none)`. The API stops at the last question and returns **403 Forbidden**. Same app, same API, the token makes the difference.
+
+> [!TIP]
+> Store **`oid`** in the audit log, not `name` or `preferred_username`. Names and emails can change, `oid` never does.
+
+#### 4 · Send it like the app would
+
+The token is on your clipboard, so you can call the API exactly the way the website does (use your own API's address):
+
+```powershell
+$token = Get-Clipboard
+Invoke-RestMethod -Method Post -Uri "https://<your-expense-api>/expenses/1042/approve" `
+    -Headers @{ Authorization = "Bearer $token" }
+```
+
+> [!IMPORTANT]
+> A real API never trusts the claims until it has **checked the signature** against Entra ID's public keys. Don't write that yourself: use Microsoft's libraries, for example [Microsoft.Identity.Web](https://learn.microsoft.com/entra/identity-platform/scenario-protected-web-api-overview) for ASP.NET Core. They check the signature, `iss`, `aud` and `exp`, and give your code the `scp` and `roles` to check.
+
+</details>
+
 ---
 
 <a id="graph"></a>
